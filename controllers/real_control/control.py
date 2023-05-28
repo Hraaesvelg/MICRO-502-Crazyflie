@@ -2,6 +2,11 @@
 #esquive coté intérieur
 #comprendre positions
 
+## Problèmes estimator (tester stabilité sans déplacement (print values)) 
+
+## Recap of the code :
+# Different possible states : TAKE_OFF, land, landing
+# Different possible zones : START, STOP, IN, OUT, BORDER, FINAL
 
 import numpy as np
 import math
@@ -62,16 +67,17 @@ if __name__ == '__main__':
     #kal.add_variable('kalman.stateZ', 'float')
 
     #state = ['TAKE_OFF', 'LAND', 'SEARCH', 'GO_BACK', 'STOP', 'AVOID', 'ARRIVED']
-    state = 'TAKE_OFF'
+    state = 'TAKE_OFF' # Initially we want to take off
     #zone = ['START', 'EXPLO', 'FINAL', 'OUT', 'GOAL']
-    zone = 'START'
+    zone = 'START' # Initially we are at start
     target_found = False
 
-    px=[3.65]#[3.65, 4.85,4.85,3.65, 3.65, 4.85,4.85,3.65,3.65, 4.85,4.85,3.65,3.65, 4.85,4.85,3.65,3.65, 4.85,4.85,3.65,]#
+    ## grid points (hardcoded)
+    px=[3.65]#[3.65, 4.85,4.85,3.65, 3.65, 4.85,4.85,3.65,3.65, 4.85,4.85,3.65,3.65, 4.85,4.85,3.65,3.65, 4.85,4.85,3.65,]# 
     py=[0.15]#[0.15, 0.15, 0.45, 0.45, 0.75, 0.75, 1.05, 1.05, 1.35, 1.35, 1.65, 1.65, 1.95, 1.95, 2.25, 2.25, 2.55, 2.55, 2.85, 2.85]#
     index=0
-
-    landing=np.array([[0.,0.],[0.,0.]])
+    take_off_coord = [0,0]
+    landing=np.array([[0.,0.],[0.,0.]]) ## coordinates of the landing pad (one for first landing and one for second landing ? )
     height_desired=0.2
     #state='go'
     print('GO')
@@ -87,14 +93,17 @@ if __name__ == '__main__':
             endTime = time.time() + 10
             startTime = endTime - 10
 
-            print('before')
+            print('before') ## what is here ?
             cf.param.set_value('kalman.resetEstimation', '1')
             time.sleep(0.1)
             cf.param.set_value('kalman.resetEstimation', '0')
             time.sleep(2)
             print('after')
 
-            #BASE SAVING
+            #BASE SAVING --> Add saving Val
+            data_start = logger[0][1]
+            take_off_coord = [data_start['stateEstimate.x'], data_start['stateEstimate.y']]
+            # End Add
 
             for log_entry in logger:
                 timestamp = log_entry[0]
@@ -107,20 +116,20 @@ if __name__ == '__main__':
 
                 if state!='land':#time.time()-startTime<7.5:
                     #if time.time()-startTime<5:#data['kalman.stateZ']<0.6
-                    if height_desired<0.6:
+                    if height_desired<0.6: # Keep going up until we reach 0.6
                         height_desired+=0.05
                         cf.commander.send_hover_setpoint(0., 0., 0, height_desired)
                         #cf.commander.send_hover_setpoint(0, 0., 0, 0)
-                    elif endTime-time.time()<2:
+                    elif endTime-time.time()<2: # Land state triggered when 2 seconds left
                         state='land'
                         print('LAND')
-                    elif state=='approach':
-                        if abs(landing[0][0]-data['stateEstimate.x'])<0.1 and abs(landing[0][1]-data['stateEstimate.y'])<0.1:
+                    elif state=='approach': # PD controller for ?? probably for grid search
+                        if abs(landing[0][0]-data['stateEstimate.x'])<0.1 and abs(landing[0][1]-data['stateEstimate.y'])<0.1: ## Tym : THIS APPROACH DOES NOT 
                             height_desired-=0.02
                         if height_desired<0.05:
                             state='landing'
                         kp=0.5
-                        cf.commander.send_hover_setpoint(kp*(landing[0][0]-data['stateEstimate.x']), kp*(landing[0][1]-data['stateEstimate.y']), 0, height_desired)
+                        cf.commander.send_hover_setpoint(kp*(landing[0][0]-data['stateEstimate.x']), kp*(landing[0][1]-data['stateEstimate.y']), 0, height_desired) # PD Control
                         #cf.commander.send_hover_setpoint(0, 0., 0, 0)
                     else:
                         #print(data['range.zrange'], data['range.up'], data['kalman.stateZ'])
@@ -171,29 +180,31 @@ if __name__ == '__main__':
                             speedy=-speed_max
                         cf.commander.send_hover_setpoint(speedx, speedy, 0, height_desired)
                         #cf.commander.send_hover_setpoint(0, 0., 0, 0)
-                else:#LANDING
-                    height_desired-=0.03
+                else: # if state == land
+                    height_desired-=0.03 ## go down
                     cf.commander.send_hover_setpoint(0, 0, 0, height_desired)
                     #cf.commander.send_hover_setpoint(0, 0., 0, 0)
-                    if zone=='FINAL' and data['kalman.stateZ']<0.1:
+                    if zone=='FINAL' and data['kalman.stateZ']<0.1: ## Once we have landed, go back to start point
                         state='GO_BACK'
                         #BASE NEW OBJ
                         index=0
-                        px=[0]#px=[startx]
-                        py=[0]#py=[starty]
+                        # Use of base coordinates
+                        px=[take_off_coord[0]] #px=[startx] ## ?
+                        py=[take_off_coord[1]]#py=[starty] ## ?
+                        # End Search
                     elif zone=='START' and data['kalman.stateZ']<0.1:
                         break
 
                 
 
-                if time.time()-startTime>3:#height_desired>0.2
+                if time.time()-startTime>3:#height_desired>0.2 # if we are after the 3 first seconds, obstacle avoidance
                     if data['range.front']<1000:
                         cf.commander.send_hover_setpoint(-0.2, -0.1, 0, height_desired)
                     if data['range.left']<800:
                         cf.commander.send_hover_setpoint(0, -0.2, 0, height_desired)
                     if data['range.right']<800:
                         cf.commander.send_hover_setpoint(0, 0.2, 0, height_desired)
-                    if data['range.back']<800:
+                    if data['range.back']<800: 
                         cf.commander.send_hover_setpoint(0.2, 0.1, 0, height_desired)
                 
                 time.sleep(0.1)
@@ -203,10 +214,8 @@ if __name__ == '__main__':
                 #time.sleep(0.1)
                 #print('[%d][%s]: %s' % (timestamp, logconf_name, data))
 
-                if time.time() > endTime:
+                if time.time() > endTime: ## finish program
                     break
-
-
 
 
 
